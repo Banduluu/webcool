@@ -8,6 +8,63 @@ $error = null;
 $message = null;
 $inspectionSaved = false;
 $scanMode = true;
+$findCustomer = static function (array $customers, string $scannedValue): array {
+    $candidates = [trim($scannedValue)];
+    $parsedUrl = parse_url($scannedValue);
+    if (is_array($parsedUrl)) {
+        if (!empty($parsedUrl['query'])) {
+            parse_str($parsedUrl['query'], $query);
+            foreach (['customer_id', 'customerId', 'id', 'owner_code', 'ownerCode', 'customer_code', 'code', 'data', 'value'] as $field) {
+                if (isset($query[$field]) && is_scalar($query[$field])) {
+                    $candidates[] = trim((string) $query[$field]);
+                }
+            }
+        }
+        if (!empty($parsedUrl['path'])) {
+            $candidates[] = trim(basename(rtrim($parsedUrl['path'], '/')));
+        }
+    }
+
+    $decoded = json_decode($scannedValue, true);
+    if (is_array($decoded)) {
+        foreach (['customer_id', 'customerId', 'id', 'owner_code', 'ownerCode', 'customer_code', 'code', 'data', 'value'] as $field) {
+            if (isset($decoded[$field]) && is_scalar($decoded[$field])) {
+                $candidates[] = trim((string) $decoded[$field]);
+            }
+        }
+    }
+    $candidates = array_values(array_unique(array_filter($candidates, static fn(string $candidate): bool => $candidate !== '')));
+
+    foreach ($candidates as $candidate) {
+        $matches = array_values(array_filter($customers, static function ($item) use ($candidate): bool {
+            return is_array($item) && (string) ($item['customer_id'] ?? '') === $candidate;
+        }));
+        if (count($matches) === 1) {
+            return ['customer' => $matches[0], 'ambiguous' => false];
+        }
+        if (count($matches) > 1) {
+            return ['customer' => null, 'ambiguous' => true];
+        }
+    }
+
+    foreach ($candidates as $candidate) {
+        $matches = array_values(array_filter($customers, static function ($item) use ($candidate): bool {
+            return is_array($item)
+                && in_array($candidate, [
+                    (string) ($item['owner_code'] ?? ''),
+                    (string) ($item['customer_code'] ?? ''),
+                ], true);
+        }));
+        if (count($matches) === 1) {
+            return ['customer' => $matches[0], 'ambiguous' => false];
+        }
+        if (count($matches) > 1) {
+            return ['customer' => null, 'ambiguous' => true];
+        }
+    }
+
+    return ['customer' => null, 'ambiguous' => false];
+};
 
 $showMicSection = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
@@ -19,18 +76,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         if ($customerId === '') {
             $error = 'Please scan a QR code or enter a Customer ID.';
         } else {
-            foreach ($customers as $item) {
-                if (!empty($item['customer_id']) && $item['customer_id'] === $customerId) {
-                    $customer = $item;
-                    break;
-                }
-            }
+            $customerLookup = $findCustomer($customers, $customerId);
+            $customer = $customerLookup['customer'];
 
             if (!$customer) {
                 $error = $customerLookupFailed
                     ? 'Customer database is unavailable. Check the Firebase connection and try again.'
-                    : 'Customer not found for Customer ID: ' . htmlspecialchars($customerId);
+                    : ($customerLookup['ambiguous']
+                        ? 'This customer code matches more than one profile. Search using the unique customer ID instead.'
+                        : 'No customer matched the scanned value "' . htmlspecialchars($customerId) . '". Scan the customer QR or enter their customer ID / owner code.');
             } else {
+                $customerId = (string) ($customer['customer_id'] ?? '');
                 $scanMode = false;
             }
         }
@@ -45,19 +101,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         if ($customerId === '') {
             $error = 'Customer ID is missing. Please scan a QR code again.';
         } else {
-            foreach ($customers as $item) {
-                if (!empty($item['customer_id']) && $item['customer_id'] === $customerId) {
-                    $customer = $item;
-                    break;
-                }
-            }
+            $customerLookup = $findCustomer($customers, $customerId);
+            $customer = $customerLookup['customer'];
 
             if (!$customer) {
                 $error = $customerLookupFailed
                     ? 'Customer database is unavailable. Check the Firebase connection and try again.'
-                    : 'Customer not found for Customer ID: ' . htmlspecialchars($customerId);
+                    : ($customerLookup['ambiguous']
+                        ? 'This customer code matches more than one profile. Search using the unique customer ID instead.'
+                        : 'No customer matched the submitted value. Scan the customer QR or enter their customer ID / owner code.');
                 $showMicSection = false;
             } else {
+                $customerId = (string) ($customer['customer_id'] ?? '');
                 $inspectionRecords = firebase_request('get', 'inspections');
                 if (is_array($inspectionRecords) && isset($inspectionRecords['error'])) {
                     $error = 'Inspection database is unavailable. Check the Firebase connection and try again.';
@@ -397,18 +452,17 @@ require_once __DIR__ . '/../includes/admin_header.php';
         function isSecureCameraContext() {
             const host = window.location.hostname;
             const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
-            const isPrivateNetwork = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
-            return window.isSecureContext || isLocalHost || isPrivateNetwork;
+            return window.isSecureContext || isLocalHost;
         }
 
         startScanBtn?.addEventListener('click', async function () {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                alert('Camera access is not supported in this browser. Try Chrome or Safari on a phone.');
+            if (!isSecureCameraContext()) {
+                alert('Live camera scanning requires HTTPS on your phone. Open this site using an HTTPS address, or upload a QR image / enter the customer code below.');
                 return;
             }
 
-            if (!isSecureCameraContext()) {
-                alert('Phone camera requires a secure connection. Open this page with HTTPS or use localhost on the same device, then try again.');
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('Camera access is not available in this browser. Try an up-to-date Chrome or Safari browser, or upload a QR image / enter the customer code below.');
                 return;
             }
 

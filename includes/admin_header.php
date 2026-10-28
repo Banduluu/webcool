@@ -3,6 +3,17 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 $isInspectorPage = strpos($_SERVER['SCRIPT_NAME'] ?? '', '/inspector/') !== false;
+$currentPage = basename($_SERVER['SCRIPT_NAME'] ?? '');
+$isAdminPage = strpos($_SERVER['SCRIPT_NAME'] ?? '', '/admin/') !== false;
+$usesDataTables = $isAdminPage && in_array($currentPage, [
+    'ante_mortem.php',
+    'condemnations.php',
+    'customers.php',
+    'dashboard.php',
+    'mic_viewer.php',
+    'registrations.php',
+    'users.php',
+], true);
 ?><!doctype html>
 <html lang="en">
 <head>
@@ -11,9 +22,13 @@ $isInspectorPage = strpos($_SERVER['SCRIPT_NAME'] ?? '', '/inspector/') !== fals
     <title>MIC Admin Panel</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <?php if ($usesDataTables): ?>
+        <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css">
+    <?php endif; ?>
     <link rel="stylesheet" href="/assets/css/admin.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <?php if ($isAdminPage && $currentPage === 'dashboard.php'): ?>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <?php endif; ?>
 </head>
 <body class="admin-body<?php echo $isInspectorPage ? ' inspector-page' : ''; ?>">
 <script>
