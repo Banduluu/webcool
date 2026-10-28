@@ -3,11 +3,25 @@ require_once __DIR__ . '/../includes/admin_functions.php';
 ensure_admin_logged_in();
 
 $inspections = array_values(array_filter(get_array_values(firebase_get('inspections')), 'is_array'));
+$requestedDate = trim((string) ($_GET['date'] ?? ''));
+$selectedDate = DateTime::createFromFormat('!Y-m-d', $requestedDate);
+if (!$selectedDate || $selectedDate->format('Y-m-d') !== $requestedDate) {
+    $selectedDate = new DateTime('today');
+}
+$today = $selectedDate->format('Y-m-d');
 $records = [];
 foreach ($inspections as $inspection) {
     $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
     $condemnation = is_array($inspectionData['condemnation'] ?? null) ? $inspectionData['condemnation'] : null;
     if ($condemnation === null && !in_array($inspection['status'] ?? '', ['Condemned', 'Partially Condemned'], true)) {
+        continue;
+    }
+
+    $recordedAt = trim((string) ($condemnation['recorded_at'] ?? ''));
+    if ($recordedAt === '') {
+        $recordedAt = trim((string) ($inspection['created_at'] ?? ''));
+    }
+    if (substr($recordedAt, 0, 10) !== $today) {
         continue;
     }
 
@@ -23,7 +37,7 @@ foreach ($inspections as $inspection) {
         'reason' => (string) ($condemnation['reason'] ?? 'N/A'),
         'remarks' => (string) ($condemnation['remarks'] ?? $inspection['final_remarks'] ?? 'N/A'),
         'inspector' => (string) ($condemnation['inspector'] ?? $inspection['inspector_name'] ?? 'N/A'),
-        'recorded_at' => (string) ($condemnation['recorded_at'] ?? $inspection['created_at'] ?? 'N/A'),
+        'recorded_at' => $recordedAt,
         'status' => ($condemnation['part_affected'] ?? '') === 'whole' ? 'Condemned' : 'Partially Condemned',
     ];
 }
@@ -45,7 +59,7 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-start gap-3 mb-4">
             <div>
                 <h3 class="mb-1">Condemnation Records</h3>
-                <p class="text-secondary mb-0">Review condemnation decisions and findings submitted by inspectors.</p>
+                <p class="text-secondary mb-0">Review condemnation decisions and findings recorded on <?php echo htmlspecialchars($selectedDate->format('F d, Y')); ?>.</p>
             </div>
         </div>
 
@@ -73,7 +87,7 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <div>
                         <h5 class="card-title mb-1">Submitted Records</h5>
-                        <p class="text-secondary mb-0">Detailed condemnation information from the inspection records.</p>
+                        <p class="text-secondary mb-0">Detailed condemnation information recorded on the selected date.</p>
                     </div>
                 </div>
                 <div class="table-responsive">
@@ -111,7 +125,7 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                         </tbody>
                     </table>
                     <?php if (!$records): ?>
-                        <p class="text-secondary text-center py-4 mb-0">No condemnation records have been submitted.</p>
+                        <p class="text-secondary text-center py-4 mb-0">No condemnation records have been submitted for <?php echo htmlspecialchars($selectedDate->format('F d, Y')); ?>.</p>
                     <?php endif; ?>
                 </div>
             </div>

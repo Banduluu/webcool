@@ -3,22 +3,7 @@ require_once __DIR__ . '/../includes/admin_functions.php';
 ensure_admin_logged_in();
 
 $customersRaw = firebase_get('customers');
-$requestedDate = trim((string) ($_GET['date'] ?? ''));
-$selectedDate = DateTime::createFromFormat('!Y-m-d', $requestedDate);
-$selectedDateValue = $selectedDate && $selectedDate->format('Y-m-d') === $requestedDate
-    ? $selectedDate->format('Y-m-d')
-    : null;
-$today = $selectedDateValue ?? date('Y-m-d');
-$customers = is_array($customersRaw) ? array_filter($customersRaw, function ($customer) use ($selectedDateValue) {
-    if (!is_array($customer)) {
-        return false;
-    }
-    if ($selectedDateValue === null) {
-        return true;
-    }
-    $recordDate = substr((string) ($customer['created_at'] ?? ''), 0, 10);
-    return $recordDate === $selectedDateValue;
-}) : [];
+$customers = is_array($customersRaw) ? array_filter($customersRaw, 'is_array') : [];
 
 require_once __DIR__ . '/../includes/admin_header.php';
 require_once __DIR__ . '/../includes/admin_sidebar.php';
@@ -29,13 +14,7 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-start gap-3 mb-4">
             <div>
                 <h3 class="mb-1">Customers</h3>
-                <p class="text-secondary mb-0">
-                    <?php if ($selectedDateValue !== null): ?>
-                        Customer profiles registered on <?php echo htmlspecialchars($selectedDate->format('F d, Y')); ?>.
-                    <?php else: ?>
-                        Showing all registered customer profiles.
-                    <?php endif; ?>
-                </p>
+                <p class="text-secondary mb-0">Showing all registered customer profiles.</p>
             </div>
         </div>
 
