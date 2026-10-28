@@ -1,11 +1,54 @@
 <?php
 require_once __DIR__ . '/../includes/admin_functions.php';
 ensure_inspector_logged_in();
+$successMessage = $_SESSION['inspector_success_message'] ?? null;
+unset($_SESSION['inspector_success_message']);
 
 $inspections = array_values(array_filter(get_array_values(firebase_get('inspections')), 'is_array'));
 $savedCertificates = array_values(array_filter(get_array_values(firebase_get('certificates')), 'is_array'));
+$customersRaw = firebase_get('customers');
+$customers = is_array($customersRaw) ? array_values(array_filter($customersRaw, 'is_array')) : [];
 $registrationsRaw = firebase_get('client_registrations');
 $registrations = is_array($registrationsRaw) ? $registrationsRaw : [];
+$inspectionsById = [];
+foreach ($inspections as $inspectionItem) {
+    if (!empty($inspectionItem['inspection_id'])) {
+        $inspectionsById[(string) $inspectionItem['inspection_id']] = $inspectionItem;
+    }
+}
+$getMeatSummary = static function (array $inspectionData, array $fallback = []): array {
+    $meatLabels = [
+        'pork' => 'Pork',
+        'beef' => 'Beef',
+        'carabeef' => 'Carabeef',
+        'entrails' => 'Entrails',
+    ];
+    $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
+    $meatTypes = [];
+    $totalWeight = 0.0;
+    $hasWeight = false;
+
+    foreach ($meatLabels as $key => $label) {
+        $details = is_array($meatDetails[$key] ?? null) ? $meatDetails[$key] : [];
+        $quantity = trim((string) ($details['qty'] ?? ''));
+        $weight = trim((string) ($details['weight'] ?? $fallback['weight_' . $key] ?? ''));
+        if ($quantity !== '' || $weight !== '') {
+            $meatTypes[] = $label;
+        }
+        if ($weight !== '' && is_numeric($weight)) {
+            $totalWeight += (float) $weight;
+            $hasWeight = true;
+        }
+    }
+
+    return [
+        'meat_type' => implode(', ', $meatTypes)
+            ?: (string) ($inspectionData['mic']['animal_type'] ?? $fallback['animal_type'] ?? 'N/A'),
+        'weight' => $hasWeight
+            ? $totalWeight
+            : ($inspectionData['meat_summary']['weight'] ?? $fallback['estimated_weight'] ?? $fallback['weight'] ?? 'N/A'),
+    ];
+};
 $certificates = [];
 
 foreach ($inspections as $inspection) {
@@ -35,18 +78,16 @@ foreach ($inspections as $inspection) {
     $dateIssued = $inspection['inspection_data']['date_issued']
         ?? $inspection['inspection_date']
         ?? substr((string) ($inspection['created_at'] ?? ''), 0, 10);
-    $weight = $registration['estimated_weight']
-        ?? $inspection['inspection_data']['meat_summary']['weight']
-        ?? $inspection['weight']
-        ?? 'N/A';
+    $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
+    $meatSummary = $getMeatSummary($inspectionData, array_merge($inspection, $registration));
 
     $certificates[] = [
         'inspection_id' => (string) ($inspection['inspection_id'] ?? ''),
         'certificate_id' => (string) $inspection['certificate_id'],
         'customer_name' => (string) ($registration['owner_name'] ?? $inspection['customer_name'] ?? 'N/A'),
-        'customer_code' => (string) ($registration['owner_code'] ?? $registration['customer_id'] ?? $inspection['customer_id'] ?? $inspection['registration_id'] ?? 'N/A'),
-        'meat_type' => (string) ($registration['animal_type'] ?? $inspection['inspection_data']['mic']['animal_type'] ?? 'N/A'),
-        'weight' => $weight,
+        'customer_code' => (string) ($registration['owner_code'] ?? $registration['customer_code'] ?? $registration['customer_id'] ?? $inspection['customer_id'] ?? $inspection['registration_id'] ?? 'N/A'),
+        'meat_type' => (string) ($meatSummary['meat_type'] !== 'N/A' ? $meatSummary['meat_type'] : ($registration['animal_type'] ?? 'N/A')),
+        'weight' => $meatSummary['weight'],
         'date_issued' => (string) $dateIssued,
     ];
 }
@@ -58,18 +99,35 @@ foreach ($savedCertificates as $savedCertificate) {
     }
 
     $savedData = is_array($savedCertificate['inspection_data'] ?? null) ? $savedCertificate['inspection_data'] : [];
+    $savedInspection = $inspectionsById[(string) ($savedCertificate['inspection_id'] ?? '')] ?? [];
+    $savedInspectionData = is_array($savedInspection['inspection_data'] ?? null) ? $savedInspection['inspection_data'] : [];
+    $savedMeatSummary = $getMeatSummary(array_merge($savedInspectionData, $savedData), $savedInspection);
+    $customerCode = (string) ($savedCertificate['customer_code'] ?? '');
+    if ($customerCode === '') {
+        foreach ($customers as $customer) {
+            if (($customer['customer_id'] ?? '') === ($savedCertificate['customer_id'] ?? '')) {
+                $customerCode = (string) ($customer['owner_code'] ?? $customer['customer_code'] ?? '');
+                break;
+            }
+        }
+    }
     $certificates[$certificateId] = [
         'inspection_id' => (string) ($savedCertificate['inspection_id'] ?? ''),
         'certificate_id' => $certificateId,
         'customer_name' => (string) ($savedCertificate['customer_name'] ?? $savedData['owner_dealer'] ?? 'N/A'),
-        'customer_code' => (string) ($savedCertificate['customer_id'] ?? 'N/A'),
-        'meat_type' => 'N/A',
-        'weight' => 'N/A',
+        'customer_code' => $customerCode !== '' ? $customerCode : (string) ($savedCertificate['customer_id'] ?? 'N/A'),
+        'meat_type' => $savedMeatSummary['meat_type'],
+        'weight' => $savedMeatSummary['weight'],
         'date_issued' => (string) ($savedData['date_issued'] ?? $savedCertificate['issued_at'] ?? 'N/A'),
     ];
 }
 
 $certificates = array_values($certificates);
+$certificateMicNumbers = get_certificate_mic_numbers($inspections, $certificates);
+foreach ($certificates as &$certificate) {
+    $certificate['mic_number'] = $certificateMicNumbers[$certificate['certificate_id']] ?? $certificate['inspection_id'];
+}
+unset($certificate);
 usort($certificates, static function (array $first, array $second): int {
     return strcmp($second['date_issued'], $first['date_issued']);
 });
@@ -107,13 +165,8 @@ require_once __DIR__ . '/../includes/admin_header.php';
             </label>
             <label class="certificate-date-field">
                 <i class="fa-regular fa-calendar-days"></i>
-                <span>From Date</span>
-                <input type="date" id="certificateFromDate" aria-label="From date">
-            </label>
-            <label class="certificate-date-field">
-                <i class="fa-regular fa-calendar-days"></i>
-                <span>To Date</span>
-                <input type="date" id="certificateToDate" aria-label="To date">
+                <span>Date</span>
+                <input type="date" id="certificateDate" value="<?php echo htmlspecialchars(date('Y-m-d')); ?>" aria-label="Date">
             </label>
             <label class="certificate-type-field">
                 <select id="certificateMeatType" aria-label="Filter by meat type">
@@ -166,7 +219,7 @@ require_once __DIR__ . '/../includes/admin_header.php';
                                 <td><span class="certificate-status">Issued</span></td>
                                 <td>
                                     <div class="certificate-actions">
-                                        <a href="/inspector/generate_certificate.php?inspection_id=<?php echo urlencode($certificate['inspection_id']); ?>&certificate_id=<?php echo urlencode($certificate['certificate_id']); ?>" class="certificate-action-button"><i class="fa-regular fa-eye"></i>View</a>
+                                        <a href="/inspector/generate_certificate.php?inspection_id=<?php echo urlencode($certificate['inspection_id']); ?>&certificate_id=<?php echo urlencode($certificate['certificate_id']); ?>&mic_number=<?php echo urlencode($certificate['mic_number']); ?>" class="certificate-action-button"><i class="fa-regular fa-eye"></i>View</a>
                                     </div>
                                 </td>
                             </tr>
@@ -187,19 +240,23 @@ require_once __DIR__ . '/../includes/admin_header.php';
     </div>
 </div>
 </div>
+<?php if ($successMessage): ?>
 <script>
-    document.getElementById('certificateFilters').addEventListener('submit', function (event) {
-        event.preventDefault();
+    window.addEventListener('load', function () {
+        window.adminShowToast(<?php echo json_encode($successMessage, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>);
+    });
+</script>
+<?php endif; ?>
+<script>
+    function filterCertificates() {
         const query = document.getElementById('certificateSearch').value.trim().toLowerCase();
-        const fromDate = document.getElementById('certificateFromDate').value;
-        const toDate = document.getElementById('certificateToDate').value;
+        const selectedDate = document.getElementById('certificateDate').value;
         const meatType = document.getElementById('certificateMeatType').value;
         const rows = Array.from(document.querySelectorAll('[data-certificate-row]'));
         const visibleRows = rows.filter(function (row) {
             const rowDate = row.dataset.date || '';
             return (!query || row.dataset.search.includes(query))
-                && (!fromDate || rowDate >= fromDate)
-                && (!toDate || rowDate <= toDate)
+                && (!selectedDate || rowDate === selectedDate)
                 && (!meatType || row.dataset.meatType === meatType);
         });
 
@@ -210,6 +267,12 @@ require_once __DIR__ . '/../includes/admin_header.php';
         document.getElementById('certificateRecordCount').textContent = visibleRows.length
             ? 'Showing 1 to ' + visibleRows.length + ' of ' + visibleRows.length + ' records'
             : 'Showing 0 to 0 of 0 records';
+    }
+
+    document.getElementById('certificateFilters').addEventListener('submit', function (event) {
+        event.preventDefault();
+        filterCertificates();
     });
+    filterCertificates();
 </script>
 <?php require_once __DIR__ . '/../includes/admin_footer.php'; ?>

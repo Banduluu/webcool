@@ -58,7 +58,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     : 'Customer not found for Customer ID: ' . htmlspecialchars($customerId);
                 $showMicSection = false;
             } else {
-                $inspections = get_array_values(firebase_get('inspections'));
+                $inspectionRecords = firebase_request('get', 'inspections');
+                if (is_array($inspectionRecords) && isset($inspectionRecords['error'])) {
+                    $error = 'Inspection database is unavailable. Check the Firebase connection and try again.';
+                } elseif ($inspectionRecords !== null && !is_array($inspectionRecords)) {
+                    $error = 'Inspection records could not be read. Please try again.';
+                } else {
+                    $inspections = get_array_values($inspectionRecords);
                 $inspectionId = generate_inspection_id($inspections);
                 $batchId = generate_batch_id($inspections);
                 $inspection = [
@@ -113,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
                 } else {
                     $error = 'Failed to save the inspection. Please try again.';
+                }
                 }
             }
         }
@@ -252,7 +259,7 @@ require_once __DIR__ . '/../includes/admin_header.php';
                     <div id="micSection" class="card shadow-sm border-0">
                         <div class="card-body">
                             <h5 class="card-title mb-3">MIC Inspection</h5>
-                            <form method="post">
+                            <form method="post" id="micForm">
                                 <input type="hidden" name="action" value="save_mic">
                                 <input type="hidden" name="customer_id" value="<?php echo htmlspecialchars($customer['customer_id'] ?? ''); ?>">
                                 <input type="hidden" name="customer_name" value="<?php echo htmlspecialchars($customer['owner_name'] ?? ''); ?>">
@@ -354,11 +361,18 @@ require_once __DIR__ . '/../includes/admin_header.php';
         const scannedCustomerId = document.getElementById('scannedCustomerId');
         const customerIdInput = document.getElementById('customer_id');
         const manualCustomerId = document.getElementById('manualCustomerId');
+        const micForm = document.getElementById('micForm');
         let scanInterval;
         let stream;
         const barcodeDetector = 'BarcodeDetector' in window
             ? new BarcodeDetector({ formats: ['qr_code'] })
             : null;
+
+        micForm?.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' && !(event.target instanceof HTMLTextAreaElement)) {
+                event.preventDefault();
+            }
+        });
 
         function submitCustomerCode(value) {
             const customerCode = value.trim();

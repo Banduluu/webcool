@@ -10,19 +10,21 @@ if (!$selectedDate || $selectedDate->format('Y-m-d') !== $requestedDate) {
     $selectedDate = new DateTime('today');
 }
 $selectedDateValue = $selectedDate->format('Y-m-d');
-$inspections = array_values(array_filter(get_array_values($inspectionsRaw), function ($item) use ($selectedDateValue) {
+$getRecordDate = static function (array $item): string {
+    $inspectionData = is_array($item['inspection_data'] ?? null) ? $item['inspection_data'] : [];
+    return substr((string) (
+        $inspectionData['date_issued']
+        ?? $item['inspection_date']
+        ?? $item['created_at']
+        ?? $item['certificate_created_at']
+        ?? ''
+    ), 0, 10);
+};
+$inspections = array_values(array_filter(get_array_values($inspectionsRaw), function ($item) use ($selectedDateValue, $getRecordDate) {
     if (!is_array($item) || (($item['status'] ?? '') !== 'MIC' && empty($item['certificate_id']))) {
         return false;
     }
-    $inspectionData = is_array($item['inspection_data'] ?? null) ? $item['inspection_data'] : [];
-    $recordDate = substr((string) (
-        $item['certificate_created_at']
-        ?? $inspectionData['date_issued']
-        ?? $item['inspection_date']
-        ?? $item['created_at']
-        ?? ''
-    ), 0, 10);
-    return $recordDate === $selectedDateValue;
+    return $getRecordDate($item) === $selectedDateValue;
 }));
 $inspectionIds = [];
 foreach ($inspections as $inspection) {
@@ -36,7 +38,7 @@ foreach ($savedCertificates as $certificate) {
         continue;
     }
     $certificateData = is_array($certificate['inspection_data'] ?? null) ? $certificate['inspection_data'] : [];
-    $recordDate = substr((string) ($certificate['issued_at'] ?? $certificateData['date_issued'] ?? ''), 0, 10);
+    $recordDate = substr((string) ($certificateData['date_issued'] ?? $certificate['issued_at'] ?? ''), 0, 10);
     if ($recordDate !== $selectedDateValue) {
         continue;
     }
@@ -47,6 +49,7 @@ foreach ($savedCertificates as $certificate) {
         'inspector_name' => (string) ($certificate['inspector_name'] ?? 'N/A'),
         'inspection_date' => $recordDate,
         'inspection_data' => $certificateData,
+        'record_date' => $recordDate,
     ];
 }
 $summary = [
@@ -105,7 +108,7 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                                     <td class="certificate-number"><?php echo $index + 1; ?></td>
                                     <td><?php echo htmlspecialchars($inspection['customer_name'] ?? $inspection['customer_id'] ?? 'N/A'); ?></td>
                                     <td><?php echo htmlspecialchars($inspection['inspector_name'] ?? 'N/A'); ?></td>
-                                    <td><?php echo htmlspecialchars($inspection['inspection_data']['date_issued'] ?? $inspection['inspection_date'] ?? $inspection['created_at'] ?? 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($inspection['record_date'] ?? ($getRecordDate($inspection) ?: 'N/A')); ?></td>
                                     <td>
                                         <a href="/admin/mic_certificate.php?inspection_id=<?php echo urlencode($inspection['inspection_id'] ?? ''); ?>" class="btn btn-sm btn-outline-primary">View</a>
                                         <a href="/admin/mic_edit.php?inspection_id=<?php echo urlencode($inspection['inspection_id'] ?? ''); ?>" class="btn btn-sm btn-outline-secondary">Edit MIC</a>

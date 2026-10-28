@@ -33,6 +33,8 @@ foreach ($registrations as $regItem) {
         break;
     }
 }
+$inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
+$controlNumber = trim((string) ($inspection['control_number'] ?? $inspectionData['control_number'] ?? ''));
 
 require_once __DIR__ . '/../includes/admin_header.php';
 require_once __DIR__ . '/../includes/admin_sidebar.php';
@@ -54,6 +56,13 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
 
         <div class="certificate-preview-card certificate-admin-view" id="certificate">
             <div class="certificate-preview-paper">
+                <header class="certificate-letterhead">
+                    <p>Republic of the Philippines<br>City of Lipa</p>
+                    <h1>OFFICE OF THE CITY VETERINARIAN</h1>
+                    <p class="certificate-control-number"><strong>CN:</strong> <?php echo htmlspecialchars($controlNumber !== '' ? $controlNumber : '________'); ?></p>
+                    <p class="certificate-letterhead-office">LIPA CITY SLAUGHTERHOUSE</p>
+                    <p class="certificate-letterhead-accreditation">NMIS ACCREDITATION NO. SH-989-AA</p>
+                </header>
                 <h2>MEAT INSPECTION CERTIFICATE</h2>
                 <p>This certifies that meat/meat by products described below are slaughtered in accordance with the Meat Inspection Code of the Philippines and at the time and date of inspection are found fit for human consumption.</p>
 
@@ -65,8 +74,8 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                 }
                 $origin = 'FMIMC';
                 $destination = 'Lipa';
-                $dateIssued = $inspection['inspection_data']['date_issued'] ?? $inspection['inspection_date'] ?? substr($inspection['created_at'] ?? '', 0, 10);
-                $timeIssued = $inspection['inspection_data']['time_issued'] ?? '';
+                $dateIssued = $inspectionData['date_issued'] ?? $inspection['inspection_date'] ?? substr($inspection['created_at'] ?? '', 0, 10);
+                $timeIssued = $inspectionData['time_issued'] ?? '';
                 if (empty($timeIssued) && !empty($inspection['inspection_data']['customer']['time_issued'])) {
                     $timeIssued = $inspection['inspection_data']['customer']['time_issued'];
                 }
@@ -113,7 +122,6 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                 <div class="certificate-preview-qr">
                     <img src="<?php echo htmlspecialchars(inspection_qr_url($inspection['inspection_id'] ?? $inspectionId)); ?>" alt="QR code for inspection <?php echo htmlspecialchars($inspection['inspection_id'] ?? $inspectionId); ?>">
                     <span>Scan to verify inspection</span>
-                    <strong><?php echo htmlspecialchars($inspection['inspection_id'] ?? $inspectionId); ?></strong>
                 </div>
             </div>
         </div>

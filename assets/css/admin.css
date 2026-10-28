@@ -1699,6 +1699,41 @@ body.sidebar-open .sidebar-overlay {
     text-align: center;
 }
 
+.certificate-letterhead {
+    margin-bottom: 1.1rem;
+    color: #111;
+    font-family: Georgia, 'Times New Roman', serif;
+    text-align: center;
+}
+
+.certificate-preview-paper .certificate-letterhead p {
+    max-width: none;
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.2;
+}
+
+.certificate-letterhead h1 {
+    margin: 0.15rem 0 0.25rem;
+    font-family: Arial, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+
+.certificate-letterhead .certificate-control-number {
+    margin: 0 5% 0.55rem 0;
+    text-align: right;
+}
+
+.certificate-letterhead .certificate-letterhead-office {
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.certificate-letterhead .certificate-letterhead-accreditation {
+    font-size: 0.68rem;
+}
+
 .certificate-preview-paper p {
     max-width: 410px;
     margin: 0 auto 1rem;
@@ -1752,9 +1787,30 @@ body.sidebar-open .sidebar-overlay {
 }
 
 .certificate-preview-signatures span {
+    display: flex;
     width: 34%;
-    padding-top: 0.45rem;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.certificate-preview-signatures span::after {
+    content: '';
+    order: 1;
+    margin: 0.35rem 0 0.2rem;
     border-top: 1px solid #999;
+}
+
+.certificate-preview-signatures strong,
+.certificate-preview-signatures small {
+    display: block;
+}
+
+.certificate-preview-signatures strong {
+    order: 0;
+}
+
+.certificate-preview-signatures small {
+    order: 2;
 }
 
 .certificate-preview-qr {
@@ -2615,6 +2671,10 @@ body.admin-body:not(.inspector-page) .text-success {
 }
 
 @media (max-width: 991.98px) {
+    body.inspector-page .main-content {
+        padding-top: 8rem;
+    }
+
     .inspector-dashboard-stats {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }

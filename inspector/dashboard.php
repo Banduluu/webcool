@@ -6,13 +6,19 @@ $inspections = array_values(array_filter(get_array_values(firebase_get('inspecti
 $customers = array_values(array_filter(get_array_values(firebase_get('customers')), 'is_array'));
 $today = date('Y-m-d');
 $todayInspections = array_values(array_filter($inspections, static function (array $inspection) use ($today): bool {
-    return substr((string) ($inspection['inspection_date'] ?? $inspection['created_at'] ?? ''), 0, 10) === $today;
+    return substr((string) ($inspection['inspection_date'] ?? ''), 0, 10) === $today
+        || substr((string) ($inspection['created_at'] ?? ''), 0, 10) === $today
+        || substr((string) ($inspection['certificate_created_at'] ?? ''), 0, 10) === $today;
+}));
+$todayAnteMortems = array_values(array_filter($inspections, static function (array $inspection) use ($today): bool {
+    $reportDate = $inspection['inspection_date'] ?? substr((string) ($inspection['created_at'] ?? ''), 0, 10);
+    return $reportDate === $today && is_array($inspection['inspection_data']['ante_mortem'] ?? null);
 }));
 $dashboardStats = [
     ['label' => 'Registered Customers', 'value' => count($customers), 'icon' => 'fa-users', 'tone' => 'green'],
     ['label' => 'QR Codes Generated', 'value' => count(array_filter($inspections, fn($inspection) => !empty($inspection['qr_code_value']))), 'icon' => 'fa-qrcode', 'tone' => 'teal'],
     ['label' => 'Inspections', 'value' => count($todayInspections), 'icon' => 'fa-clipboard-check', 'tone' => 'blue'],
-    ['label' => 'Ante Mortem', 'value' => count(array_filter($todayInspections, fn($inspection) => !empty($inspection['inspection_data']['ante_mortem']))), 'icon' => 'fa-file-circle-check', 'tone' => 'orange'],
+    ['label' => 'Ante Mortem', 'value' => count($todayAnteMortems), 'icon' => 'fa-file-circle-check', 'tone' => 'orange'],
 ];
 $dashboardFunctions = [
     ['title' => 'Customer Registration', 'description' => 'Enter customer information and generate a QR code.', 'icon' => 'fa-user-plus', 'href' => '/inspector/customer_registration.php'],

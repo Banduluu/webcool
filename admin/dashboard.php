@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/admin_functions.php';
 ensure_admin_logged_in();
 
 $inspections = array_values(array_filter(get_array_values(firebase_get('inspections')), 'is_array'));
+$savedCertificates = array_values(array_filter(get_array_values(firebase_get('certificates')), 'is_array'));
 $requestedDate = trim((string) ($_GET['date'] ?? ''));
 $selectedDate = DateTime::createFromFormat('!Y-m-d', $requestedDate);
 if (!$selectedDate || $selectedDate->format('Y-m-d') !== $requestedDate) {
@@ -12,10 +13,29 @@ $today = $selectedDate->format('Y-m-d');
 $yesterday = (clone $selectedDate)->modify('-1 day')->format('Y-m-d');
 $selectedDateLabel = $selectedDate->format('F d, Y');
 
-$getDailyInspectionMetrics = static function (array $items, string $date): array {
+$getInspectionHeads = static function (array $inspection, array $inspectionData): int {
+    $anteMortem = is_array($inspectionData['ante_mortem'] ?? null) ? $inspectionData['ante_mortem'] : [];
+    $meatSummary = is_array($inspectionData['meat_summary'] ?? null) ? $inspectionData['meat_summary'] : [];
+    foreach ([$anteMortem['no_of_heads'] ?? null, $inspection['head_count'] ?? null, $meatSummary['no_of_heads'] ?? null] as $savedHeads) {
+        $heads = (int) $savedHeads;
+        if ($heads > 0) {
+            return $heads;
+        }
+    }
+
+    $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
+    $heads = 0;
+    foreach (['pork', 'beef', 'carabeef', 'entrails'] as $meatType) {
+        $detail = is_array($meatDetails[$meatType] ?? null) ? $meatDetails[$meatType] : [];
+        $heads += (int) ($detail['qty'] ?? $inspection['qty_' . $meatType] ?? 0);
+    }
+
+    return $heads;
+};
+
+$getDailyInspectionMetrics = static function (array $items, string $date) use ($getInspectionHeads): array {
     $totals = [
         'received' => 0,
-        'certificates' => 0,
         'passed' => 0,
         'rejected_ante' => 0,
         'slaughtered' => 0,
@@ -27,14 +47,36 @@ $getDailyInspectionMetrics = static function (array $items, string $date): array
         $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
         $condemnation = is_array($inspectionData['condemnation'] ?? null) ? $inspectionData['condemnation'] : [];
         $hasCondemnationRecord = !empty($condemnation);
-        $certificateDate = substr((string) ($inspectionData['date_issued'] ?? $inspection['inspection_date'] ?? $inspection['created_at'] ?? ''), 0, 10);
-        if ($certificateDate === $date && !empty($inspection['certificate_id']) && strtolower((string) ($inspection['decision'] ?? '')) === 'passed') {
-            $totals['certificates']++;
-        }
 
         $condemnationDate = substr((string) ($condemnation['recorded_at'] ?? ''), 0, 10);
         if ($hasCondemnationRecord && $condemnationDate === $date) {
             $totals['condemned_weight'] += (float) ($condemnation['weight'] ?? 0);
+        }
+
+        $status = strtolower((string) ($inspection['status'] ?? ''));
+        $slaughterData = is_array($inspectionData['slaughter'] ?? null) ? $inspectionData['slaughter'] : [];
+        $slaughterDate = '';
+        foreach ([
+            $inspectionData['slaughter_date'] ?? '',
+            $slaughterData['slaughter_date'] ?? '',
+            $slaughterData['date'] ?? '',
+            $inspection['inspection_date'] ?? '',
+            $inspection['created_at'] ?? '',
+            $inspectionData['date_issued'] ?? '',
+            $inspection['certificate_created_at'] ?? '',
+        ] as $dateValue) {
+            $candidateDate = substr(trim((string) $dateValue), 0, 10);
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $candidateDate)) {
+                $slaughterDate = $candidateDate;
+                break;
+            }
+        }
+        $hasSlaughterRecord = !empty($inspectionData['slaughter'])
+            || !empty($inspectionData['decision'])
+            || !empty($inspection['certificate_id'])
+            || in_array($status, ['mic', 'slaughter', 'passed', 'partially condemned', 'condemned'], true);
+        if ($hasSlaughterRecord && $slaughterDate === $date) {
+            $totals['slaughtered'] += $getInspectionHeads($inspection, $inspectionData);
         }
 
         $recordDate = substr((string) ($inspection['created_at'] ?? $inspection['inspection_date'] ?? ''), 0, 10);
@@ -44,22 +86,17 @@ $getDailyInspectionMetrics = static function (array $items, string $date): array
 
         $anteMortem = is_array($inspectionData['ante_mortem'] ?? null) ? $inspectionData['ante_mortem'] : [];
         $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
-        $status = strtolower((string) ($inspection['status'] ?? ''));
         $decision = strtolower((string) ($inspection['decision'] ?? $inspectionData['decision'] ?? ''));
-        $heads = (int) ($anteMortem['no_of_heads'] ?? $inspection['head_count'] ?? $inspectionData['meat_summary']['no_of_heads'] ?? 0);
+        $heads = $getInspectionHeads($inspection, $inspectionData);
         $totalWeight = 0.0;
 
         foreach (['pork', 'beef', 'carabeef', 'entrails'] as $meatType) {
             $detail = is_array($meatDetails[$meatType] ?? null) ? $meatDetails[$meatType] : [];
-            if ($heads === 0) {
-                $heads += (int) ($detail['qty'] ?? $inspection['qty_' . $meatType] ?? 0);
-            }
             $totalWeight += (float) ($detail['weight'] ?? $inspection['weight_' . $meatType] ?? 0);
         }
 
         $isPassed = $decision === 'passed' || $status === 'passed' || !empty($inspection['certificate_id']);
         $isCondemned = $decision === 'condemned' || $status === 'condemned';
-        $hasSlaughterRecord = !empty($inspectionData['slaughter']) || in_array($status, ['slaughter', 'passed', 'partially condemned', 'condemned'], true);
         $anteStatus = strtolower((string) ($anteMortem['status'] ?? $anteMortem['decision'] ?? ''));
 
         $totals['received'] += $heads;
@@ -70,9 +107,6 @@ $getDailyInspectionMetrics = static function (array $items, string $date): array
         if (strpos($status, 'reject') !== false || strpos($anteStatus, 'reject') !== false) {
             $totals['rejected_ante'] += $heads;
         }
-        if ($hasSlaughterRecord) {
-            $totals['slaughtered'] += $heads;
-        }
         if ($isCondemned && !$hasCondemnationRecord) {
             $totals['condemned_weight'] += $totalWeight;
         }
@@ -81,11 +115,48 @@ $getDailyInspectionMetrics = static function (array $items, string $date): array
     return $totals;
 };
 
+$getIssuedCertificateCount = static function (array $inspectionItems, array $certificateItems, string $date): int {
+    $issuedCertificates = [];
+    foreach ($inspectionItems as $inspection) {
+        $certificateId = (string) ($inspection['certificate_id'] ?? '');
+        if ($certificateId === '' || strtolower((string) ($inspection['decision'] ?? '')) !== 'passed') {
+            continue;
+        }
+        $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
+        $recordDate = substr((string) (
+            $inspectionData['date_issued']
+            ?? $inspection['inspection_date']
+            ?? $inspection['created_at']
+            ?? $inspection['certificate_created_at']
+            ?? ''
+        ), 0, 10);
+        if ($recordDate === $date) {
+            $issuedCertificates[$certificateId] = true;
+        }
+    }
+
+    foreach ($certificateItems as $certificate) {
+        $certificateId = (string) ($certificate['certificate_id'] ?? '');
+        if ($certificateId === '' || isset($issuedCertificates[$certificateId])) {
+            continue;
+        }
+        $certificateData = is_array($certificate['inspection_data'] ?? null) ? $certificate['inspection_data'] : [];
+        $recordDate = substr((string) ($certificateData['date_issued'] ?? $certificate['issued_at'] ?? ''), 0, 10);
+        if ($recordDate === $date) {
+            $issuedCertificates[$certificateId] = true;
+        }
+    }
+
+    return count($issuedCertificates);
+};
+
 $todayMetrics = $getDailyInspectionMetrics($inspections, $today);
 $yesterdayMetrics = $getDailyInspectionMetrics($inspections, $yesterday);
+$todayCertificates = $getIssuedCertificateCount($inspections, $savedCertificates, $today);
+$yesterdayCertificates = $getIssuedCertificateCount($inspections, $savedCertificates, $yesterday);
 $dashboardStats = [
     ['label' => 'Animals Received', 'value' => number_format($todayMetrics['received']), 'change' => percent_change($todayMetrics['received'], $yesterdayMetrics['received']), 'current' => $todayMetrics['received'], 'previous' => $yesterdayMetrics['received'], 'icon' => 'fa-cow', 'tone' => 'green'],
-    ['label' => 'Certificates Issued', 'value' => number_format($todayMetrics['certificates']), 'change' => percent_change($todayMetrics['certificates'], $yesterdayMetrics['certificates']), 'current' => $todayMetrics['certificates'], 'previous' => $yesterdayMetrics['certificates'], 'icon' => 'fa-circle-check', 'tone' => 'green'],
+    ['label' => 'Certificates Issued', 'value' => number_format($todayCertificates), 'change' => percent_change($todayCertificates, $yesterdayCertificates), 'current' => $todayCertificates, 'previous' => $yesterdayCertificates, 'icon' => 'fa-circle-check', 'tone' => 'green'],
     ['label' => 'Rejected (Ante)', 'value' => number_format($todayMetrics['rejected_ante']), 'change' => percent_change($todayMetrics['rejected_ante'], $yesterdayMetrics['rejected_ante']), 'current' => $todayMetrics['rejected_ante'], 'previous' => $yesterdayMetrics['rejected_ante'], 'icon' => 'fa-circle-xmark', 'tone' => 'red', 'inverse' => true],
     ['label' => 'Slaughtered', 'value' => number_format($todayMetrics['slaughtered']), 'change' => percent_change($todayMetrics['slaughtered'], $yesterdayMetrics['slaughtered']), 'current' => $todayMetrics['slaughtered'], 'previous' => $yesterdayMetrics['slaughtered'], 'icon' => 'fa-scissors', 'tone' => 'purple'],
     ['label' => 'Meat Released', 'value' => number_format($todayMetrics['released_weight']) . ' kg', 'change' => percent_change((int) round($todayMetrics['released_weight']), (int) round($yesterdayMetrics['released_weight'])), 'current' => $todayMetrics['released_weight'], 'previous' => $yesterdayMetrics['released_weight'], 'icon' => 'fa-bacon', 'tone' => 'orange'],

@@ -207,6 +207,81 @@ function generate_inspection_id(array $existingInspections): string
     return $prefix . str_pad((string) $nextNumber, 6, '0', STR_PAD_LEFT);
 }
 
+function generate_mic_control_number(array $inspections, array $certificates): array
+{
+    $year = date('Y');
+    $prefix = 'MIC-' . $year . '-';
+    $maximumSequence = 0;
+
+    foreach (array_merge($inspections, $certificates) as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        foreach (['control_number', 'mic_number'] as $numberField) {
+            $storedNumber = trim((string) ($record[$numberField] ?? ''));
+            if (preg_match('/^MIC-' . preg_quote($year, '/') . '-(\d+)$/', $storedNumber, $matches)) {
+                $maximumSequence = max($maximumSequence, (int) $matches[1]);
+            }
+        }
+    }
+
+    $counter = firebase_increment_counter('mic_control_number_counters/' . $year, $maximumSequence);
+    if (!isset($counter['value'])) {
+        return ['error' => (string) ($counter['error'] ?? 'Unable to generate a MIC control number.')];
+    }
+
+    return ['control_number' => $prefix . str_pad((string) $counter['value'], 4, '0', STR_PAD_LEFT)];
+}
+
+function get_certificate_mic_numbers(array $inspections, array $certificates): array
+{
+    $micNumbers = [];
+    $usedNumbers = [];
+    $numberingRecords = $inspections;
+
+    foreach ($certificates as $certificate) {
+        if (!is_array($certificate)) {
+            continue;
+        }
+        $certificateId = (string) ($certificate['certificate_id'] ?? '');
+        $micNumber = trim((string) ($certificate['mic_number'] ?? ''));
+        if ($certificateId === '' || $micNumber === '' || isset($usedNumbers[$micNumber])) {
+            continue;
+        }
+        $micNumbers[$certificateId] = $micNumber;
+        $usedNumbers[$micNumber] = true;
+        $numberingRecords[] = ['inspection_id' => $micNumber];
+    }
+
+    foreach ($certificates as $certificate) {
+        if (!is_array($certificate)) {
+            continue;
+        }
+        $certificateId = (string) ($certificate['certificate_id'] ?? '');
+        if ($certificateId === '' || isset($micNumbers[$certificateId])) {
+            continue;
+        }
+
+        $inspectionId = trim((string) ($certificate['inspection_id'] ?? ''));
+        if ($inspectionId !== '' && !isset($usedNumbers[$inspectionId])) {
+            $micNumbers[$certificateId] = $inspectionId;
+            $usedNumbers[$inspectionId] = true;
+            continue;
+        }
+
+        $micNumber = generate_inspection_id($numberingRecords);
+        while (isset($usedNumbers[$micNumber])) {
+            $numberingRecords[] = ['inspection_id' => $micNumber];
+            $micNumber = generate_inspection_id($numberingRecords);
+        }
+        $micNumbers[$certificateId] = $micNumber;
+        $usedNumbers[$micNumber] = true;
+        $numberingRecords[] = ['inspection_id' => $micNumber];
+    }
+
+    return $micNumbers;
+}
+
 function generate_customer_id(array $existingCustomers): string
 {
     $prefix = 'CUST-';

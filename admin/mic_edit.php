@@ -23,6 +23,7 @@ if (!$inspection) {
 
 $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
 $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
+$controlNumber = trim((string) ($inspection['control_number'] ?? $inspectionData['control_number'] ?? ''));
 $message = null;
 $error = null;
 $meatTypes = [
@@ -81,6 +82,10 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                 <div class="card-body">
                     <h5 class="card-title mb-3">Certificate Details</h5>
                     <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Control Number</label>
+                            <input class="form-control" value="<?php echo htmlspecialchars($controlNumber); ?>" placeholder="Assigned when certificate is generated" readonly>
+                        </div>
                         <?php foreach ($meatTypes as $key => $label): ?>
                             <div class="col-12">
                                 <label class="form-label fw-semibold"><?php echo $label; ?></label>

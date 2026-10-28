@@ -38,10 +38,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['admin_username'] = $username;
             $account = get_admin_account();
             $settings = get_admin_settings();
+            record_activity_log('Updated administrator settings');
             $message = 'Settings saved successfully.';
         }
     }
 }
+
+$activityLogsResult = firebase_request('GET', 'activity_logs');
+$activityLogsError = is_array($activityLogsResult) && isset($activityLogsResult['error']);
+$activityLogs = !$activityLogsError && is_array($activityLogsResult)
+    ? array_values(array_filter($activityLogsResult, 'is_array'))
+    : [];
+usort($activityLogs, static function (array $first, array $second): int {
+    return strcmp((string) ($second['created_at'] ?? ''), (string) ($first['created_at'] ?? ''));
+});
+$activityLogs = array_slice($activityLogs, 0, 100);
 
 require_once __DIR__ . '/../includes/admin_header.php';
 require_once __DIR__ . '/../includes/admin_sidebar.php';
@@ -94,6 +105,51 @@ require_once __DIR__ . '/../includes/admin_sidebar.php';
                             </div>
                         </div>
                 </form>
+            </div>
+        </div>
+
+        <div class="card shadow-sm border-0 mt-4">
+            <div class="card-body">
+                <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+                    <div>
+                        <h5 class="mb-1">Activity Logs</h5>
+                        <p class="text-secondary small mb-0">Recent account and record changes, newest first.</p>
+                    </div>
+                    <span class="badge text-bg-secondary"><?php echo count($activityLogs); ?> recent</span>
+                </div>
+                <?php if ($activityLogsError): ?>
+                    <div class="alert alert-danger mb-0">Unable to load activity logs from Firebase. Please try again later.</div>
+                <?php elseif (!$activityLogs): ?>
+                    <div class="alert alert-light border mb-0">No activity has been recorded yet.</div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Date and Time</th>
+                                    <th scope="col">User</th>
+                                    <th scope="col">Action</th>
+                                    <th scope="col">Record</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($activityLogs as $activityLog):
+                                    $activityTimestamp = strtotime((string) ($activityLog['created_at'] ?? ''));
+                                ?>
+                                    <tr>
+                                        <td><?php echo $activityTimestamp !== false ? htmlspecialchars(date('M d, Y h:i A', $activityTimestamp)) : 'N/A'; ?></td>
+                                        <td>
+                                            <?php echo htmlspecialchars((string) ($activityLog['actor_name'] ?? 'Unknown')); ?>
+                                            <span class="text-secondary small">(<?php echo htmlspecialchars((string) ($activityLog['actor_role'] ?? '')); ?>)</span>
+                                        </td>
+                                        <td><?php echo htmlspecialchars((string) ($activityLog['action'] ?? 'Activity')); ?></td>
+                                        <td><?php echo htmlspecialchars((string) ($activityLog['resource'] ?? '')); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>

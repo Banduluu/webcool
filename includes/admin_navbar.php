@@ -45,10 +45,6 @@ $pageSubtitle = $pageTitles[$currentPage]['subtitle'] ?? 'Manage the MIC system.
                     </form>
                 </div>
             </div>
-            <button class="btn btn-icon btn-light position-relative" type="button">
-                <i class="fa-regular fa-bell"></i>
-                <span class="badge bg-success rounded-pill position-absolute top-0 start-100 translate-middle">5</span>
-            </button>
             <div class="dropdown">
                 <button class="btn btn-light dropdown-toggle d-flex align-items-center" type="button" id="profileMenu" data-bs-toggle="dropdown" aria-expanded="false">
                     <div class="avatar bg-success text-white rounded-circle me-2">A</div>

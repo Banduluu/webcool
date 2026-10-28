@@ -4,11 +4,42 @@ ensure_inspector_logged_in();
 
 $inspectionsRaw = firebase_get('inspections');
 $inspections = is_array($inspectionsRaw) ? $inspectionsRaw : [];
+$certificatesRaw = firebase_get('certificates');
+$certificates = is_array($certificatesRaw) ? $certificatesRaw : [];
 $registrationsRaw = firebase_get('client_registrations');
 $registrations = is_array($registrationsRaw) ? $registrationsRaw : [];
 $inspectionId = trim($_GET['inspection_id'] ?? $_POST['inspection_id'] ?? '');
 $certificateLookupId = trim($_GET['certificate_id'] ?? '');
 $viewOnly = $certificateLookupId !== '' || ($_GET['view'] ?? '') === '1';
+$certificateRecord = null;
+foreach ($certificates as $item) {
+    if (is_array($item) && (string) ($item['certificate_id'] ?? '') === $certificateLookupId) {
+        $certificateRecord = $item;
+        if (!empty($item['inspection_id'])) {
+            $inspectionId = (string) $item['inspection_id'];
+        }
+        break;
+    }
+}
+$certificateRowsForNumbering = [];
+foreach ($certificates as $item) {
+    if (is_array($item) && !empty($item['certificate_id'])) {
+        $certificateRowsForNumbering[(string) $item['certificate_id']] = $item;
+    }
+}
+foreach ($inspections as $item) {
+    if (is_array($item) && !empty($item['certificate_id']) && !isset($certificateRowsForNumbering[(string) $item['certificate_id']])) {
+        $certificateRowsForNumbering[(string) $item['certificate_id']] = [
+            'certificate_id' => (string) $item['certificate_id'],
+            'inspection_id' => (string) ($item['inspection_id'] ?? ''),
+        ];
+    }
+}
+$certificateMicNumbers = get_certificate_mic_numbers($inspections, array_values($certificateRowsForNumbering));
+$micNumberRecords = $inspections;
+foreach ($certificateMicNumbers as $existingMicNumber) {
+    $micNumberRecords[] = ['inspection_id' => $existingMicNumber];
+}
 $inspection = null;
 $inspectionKey = null;
 
@@ -29,6 +60,13 @@ if (!$inspection && $certificateLookupId !== '') {
             break;
         }
     }
+}
+
+if ($inspection && $certificateRecord) {
+    $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
+    $certificateData = is_array($certificateRecord['inspection_data'] ?? null) ? $certificateRecord['inspection_data'] : [];
+    $inspection['inspection_data'] = array_merge($inspectionData, $certificateData);
+    $inspection['certificate_id'] = $certificateLookupId;
 }
 
 $customerOptions = [];
@@ -88,54 +126,68 @@ $certificateMeatTypes = [
 ];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $inspection && isset($_POST['action']) && $_POST['action'] === 'generate_certificate') {
     $existingData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
-    $certificateId = generate_certificate_id(get_array_values(firebase_get('certificates')));
-    $meatDetailsUpdate = [];
-    foreach ($certificateMeatTypes as $meatKey => $meatLabel) {
-        $meatDetailsUpdate[$meatKey] = [
-            'qty' => trim($_POST['qty_' . $meatKey] ?? ''),
-            'weight' => trim($_POST['weight_' . $meatKey] ?? ''),
+    $controlNumberResult = generate_mic_control_number($inspections, $certificates);
+    if (!isset($controlNumberResult['control_number'])) {
+        $error = (string) ($controlNumberResult['error'] ?? 'Unable to generate a MIC control number.');
+    } else {
+        $certificateId = generate_certificate_id(get_array_values($certificates));
+        $controlNumber = $controlNumberResult['control_number'];
+        $meatDetailsUpdate = [];
+        foreach ($certificateMeatTypes as $meatKey => $meatLabel) {
+            $meatDetailsUpdate[$meatKey] = [
+                'qty' => trim($_POST['qty_' . $meatKey] ?? ''),
+                'weight' => trim($_POST['weight_' . $meatKey] ?? ''),
+            ];
+        }
+        $certificateData = [
+            'meat_details' => $meatDetailsUpdate,
+            'owner_dealer' => trim($_POST['customer_name'] ?? ''),
+            'origin' => 'FMIMC',
+            'destination' => 'Lipa',
+            'date_issued' => trim($_POST['date_issued'] ?? date('Y-m-d')),
+            'time_issued' => trim($_POST['time_issued'] ?? ''),
         ];
+        $certificateCreatedAt = date('c');
+        $update = [
+            'certificate_id' => $certificateId,
+            'control_number' => $controlNumber,
+            'qr_code_value' => $inspectionId,
+            'certificate_created_at' => $certificateCreatedAt,
+            'status' => 'Passed',
+            'decision' => 'Passed',
+            'inspection_data' => array_merge($existingData, $certificateData),
+        ];
+        $saveResult = firebase_patch('inspections/' . $inspectionKey, $update);
+        $certificateRecord = [
+            'certificate_id' => $certificateId,
+            'inspection_id' => $inspectionId,
+            'control_number' => $controlNumber,
+            'mic_number' => generate_inspection_id($micNumberRecords),
+            'customer_id' => (string) ($inspection['customer_id'] ?? ''),
+            'customer_code' => (string) ($registration['owner_code'] ?? $registration['customer_code'] ?? $registration['customer_id'] ?? $inspection['customer_id'] ?? ''),
+            'customer_name' => (string) ($inspection['customer_name'] ?? $certificateData['owner_dealer']),
+            'inspector_name' => (string) ($inspection['inspector_name'] ?? get_current_inspector_name()),
+            'status' => 'Passed',
+            'issued_at' => $certificateCreatedAt,
+            'inspection_data' => $certificateData,
+        ];
+        $certificateSaveResult = firebase_put('certificates/' . $certificateId, $certificateRecord);
+        $inspectionSaved = $saveResult !== null && (!is_array($saveResult) || !isset($saveResult['error']));
+        $certificateSaved = $certificateSaveResult !== null && (!is_array($certificateSaveResult) || !isset($certificateSaveResult['error']));
+        if ($inspectionSaved && $certificateSaved) {
+            $_SESSION['inspector_success_message'] = 'Certificate generated successfully.';
+            header('Location: /inspector/certificates.php');
+            exit;
+        }
+        $error = 'Unable to save the certificate. Please try again.';
     }
-    $certificateData = [
-        'meat_details' => $meatDetailsUpdate,
-        'owner_dealer' => trim($_POST['customer_name'] ?? ''),
-        'origin' => 'FMIMC',
-        'destination' => 'Lipa',
-        'date_issued' => trim($_POST['date_issued'] ?? date('Y-m-d')),
-        'time_issued' => trim($_POST['time_issued'] ?? ''),
-    ];
-    $certificateCreatedAt = date('c');
-    $update = [
-        'certificate_id' => $certificateId,
-        'qr_code_value' => $inspectionId,
-        'certificate_created_at' => $certificateCreatedAt,
-        'status' => 'Passed',
-        'decision' => 'Passed',
-        'inspection_data' => array_merge($existingData, $certificateData),
-    ];
-    $saveResult = firebase_patch('inspections/' . $inspectionKey, $update);
-    $certificateRecord = [
-        'certificate_id' => $certificateId,
-        'inspection_id' => $inspectionId,
-        'customer_id' => (string) ($inspection['customer_id'] ?? ''),
-        'customer_name' => (string) ($inspection['customer_name'] ?? $certificateData['owner_dealer']),
-        'inspector_name' => (string) ($inspection['inspector_name'] ?? get_current_inspector_name()),
-        'status' => 'Passed',
-        'issued_at' => $certificateCreatedAt,
-        'inspection_data' => $certificateData,
-    ];
-    $certificateSaveResult = firebase_put('certificates/' . $certificateId, $certificateRecord);
-    $inspectionSaved = $saveResult !== null && (!is_array($saveResult) || !isset($saveResult['error']));
-    $certificateSaved = $certificateSaveResult !== null && (!is_array($certificateSaveResult) || !isset($certificateSaveResult['error']));
-    if ($inspectionSaved && $certificateSaved) {
-        header('Location: /inspector/certificates.php');
-        exit;
-    }
-    $error = 'Unable to save the certificate. Please try again.';
 }
 
 $inspectionData = is_array($inspection['inspection_data'] ?? null) ? $inspection['inspection_data'] : [];
 $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
+$controlNumber = trim((string) ($certificateRecord['control_number'] ?? $inspection['control_number'] ?? $inspectionData['control_number'] ?? ''));
+$ownerDealerName = trim((string) ($inspectionData['owner_dealer'] ?? $registration['owner_name'] ?? $inspection['customer_name'] ?? 'N/A'));
+$meatInspectorName = trim((string) ($certificateRecord['inspector_name'] ?? $inspection['inspector_name'] ?? get_current_inspector_name()));
 $defaultDate = $viewOnly
     ? ($inspectionData['date_issued'] ?? $inspection['inspection_date'] ?? substr((string) ($inspection['created_at'] ?? date('Y-m-d')), 0, 10))
     : date('Y-m-d');
@@ -235,16 +287,25 @@ require_once __DIR__ . '/../includes/admin_header.php';
                         <div class="certificate-preview-header"><strong><i class="fa-solid fa-file-lines"></i> Certificate Preview</strong><span><button type="button" onclick="window.print()"><i class="fa-solid fa-print"></i> Print</button><button type="button" onclick="window.print()"><i class="fa-solid fa-download"></i> Download</button></span></div>
                         <?php endif; ?>
                         <div class="certificate-preview-paper">
+                            <header class="certificate-letterhead">
+                                <p>Republic of the Philippines<br>City of Lipa</p>
+                                <h1>OFFICE OF THE CITY VETERINARIAN</h1>
+                                <p class="certificate-control-number"><strong>CN:</strong> <?php echo htmlspecialchars($controlNumber !== '' ? $controlNumber : '________'); ?></p>
+                                <p class="certificate-letterhead-office">LIPA CITY SLAUGHTERHOUSE</p>
+                                <p class="certificate-letterhead-accreditation">NMIS ACCREDITATION NO. SH-989-AA</p>
+                            </header>
                             <h2>MEAT INSPECTION CERTIFICATE</h2>
                             <p>This certifies that meat/meat by products described below are slaughtered in accordance with the Meat Inspection Code of the Philippines and at the time and date of inspection are found fit for human consumption.</p>
                             <table><thead><tr><th>Type of Meat/Entrails</th><th>Quantity</th><th>Weight</th></tr></thead><tbody><?php foreach ($certificateMeatTypes as $meatKey => $meatLabel): ?><tr><td><?php echo $meatLabel; ?></td><td id="preview-qty-<?php echo $meatKey; ?>"><?php echo htmlspecialchars($meatDetails[$meatKey]['qty'] ?? ($meatKey === 'entrails' ? 'set/s' : 'hd/s')); ?></td><td id="preview-weight-<?php echo $meatKey; ?>"><?php echo htmlspecialchars($meatDetails[$meatKey]['weight'] ?? 'kls.'); ?></td></tr><?php endforeach; ?></tbody></table>
                             <dl><dt>Name of Owner (Dealer)</dt><dd><?php echo htmlspecialchars($registration['owner_name'] ?? $inspection['customer_name'] ?? 'N/A'); ?></dd><dt>Point of Origin</dt><dd id="preview-origin">FMIMC</dd><dt>Destination</dt><dd id="preview-destination">Lipa</dd><dt>Time Issued</dt><dd id="preview-time"><?php echo htmlspecialchars($defaultTime); ?></dd><dt>Date Issued</dt><dd id="preview-date"><?php echo htmlspecialchars($defaultDate); ?></dd></dl>
-                            <div class="certificate-preview-signatures"><span>Owner/Dealer</span><span>Meat Inspector</span></div>
+                            <div class="certificate-preview-signatures">
+                                <span><strong><?php echo htmlspecialchars($ownerDealerName); ?></strong><small>Owner/Dealer</small></span>
+                                <span><strong><?php echo htmlspecialchars($meatInspectorName); ?></strong><small>Meat Inspector</small></span>
+                            </div>
                             <?php if ($inspectionId !== ''): ?>
                                 <div class="certificate-preview-qr">
                                     <img src="<?php echo htmlspecialchars(inspection_qr_url($inspectionId)); ?>" alt="QR code for inspection <?php echo htmlspecialchars($inspectionId); ?>">
                                     <span>Scan to verify inspection</span>
-                                    <strong><?php echo htmlspecialchars($inspectionId); ?></strong>
                                 </div>
                             <?php endif; ?>
                         </div>

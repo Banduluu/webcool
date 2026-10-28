@@ -94,4 +94,5 @@ if (($matchedInspector['status'] ?? 'Active') === 'Inactive') {
 }
 $_SESSION['inspector_logged_in'] = true;
 $_SESSION['inspector_username'] = $verifiedEmail;
+record_activity_log('Signed in');
 echo json_encode(['success' => true, 'redirect' => '/inspector/dashboard.php']);

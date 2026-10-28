@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (admin_login($username, $password)) {
         $_SESSION['admin_logged_in'] = true;
         $_SESSION['admin_username'] = $username;
+        record_activity_log('Signed in');
         header('Location: /admin/dashboard.php');
         exit;
     }
@@ -27,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (inspector_login($username, $password)) {
         $_SESSION['inspector_logged_in'] = true;
         $_SESSION['inspector_username'] = $username;
+        record_activity_log('Signed in');
         header('Location: /inspector/dashboard.php');
         exit;
     }
