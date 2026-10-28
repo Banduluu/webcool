@@ -37,7 +37,7 @@ $getDailyInspectionMetrics = static function (array $items, string $date) use ($
     $totals = [
         'received' => 0,
         'passed' => 0,
-        'rejected_ante' => 0,
+        'ante_mortem_inspections' => 0,
         'slaughtered' => 0,
         'released_weight' => 0.0,
         'condemned_weight' => 0.0,
@@ -79,12 +79,16 @@ $getDailyInspectionMetrics = static function (array $items, string $date) use ($
             $totals['slaughtered'] += $getInspectionHeads($inspection, $inspectionData);
         }
 
-        $recordDate = substr((string) ($inspection['created_at'] ?? $inspection['inspection_date'] ?? ''), 0, 10);
+        $createdAt = trim((string) ($inspection['created_at'] ?? ''));
+        $recordDate = substr($createdAt !== '' ? $createdAt : (string) ($inspection['inspection_date'] ?? ''), 0, 10);
         if ($recordDate !== $date) {
             continue;
         }
 
         $anteMortem = is_array($inspectionData['ante_mortem'] ?? null) ? $inspectionData['ante_mortem'] : [];
+        if ($anteMortem) {
+            $totals['ante_mortem_inspections']++;
+        }
         $meatDetails = is_array($inspectionData['meat_details'] ?? null) ? $inspectionData['meat_details'] : [];
         $decision = strtolower((string) ($inspection['decision'] ?? $inspectionData['decision'] ?? ''));
         $heads = $getInspectionHeads($inspection, $inspectionData);
@@ -97,15 +101,10 @@ $getDailyInspectionMetrics = static function (array $items, string $date) use ($
 
         $isPassed = $decision === 'passed' || $status === 'passed' || !empty($inspection['certificate_id']);
         $isCondemned = $decision === 'condemned' || $status === 'condemned';
-        $anteStatus = strtolower((string) ($anteMortem['status'] ?? $anteMortem['decision'] ?? ''));
-
         $totals['received'] += $heads;
         if ($isPassed) {
             $totals['passed'] += $heads;
             $totals['released_weight'] += $totalWeight;
-        }
-        if (strpos($status, 'reject') !== false || strpos($anteStatus, 'reject') !== false) {
-            $totals['rejected_ante'] += $heads;
         }
         if ($isCondemned && !$hasCondemnationRecord) {
             $totals['condemned_weight'] += $totalWeight;
@@ -157,7 +156,7 @@ $yesterdayCertificates = $getIssuedCertificateCount($inspections, $savedCertific
 $dashboardStats = [
     ['label' => 'Animals Received', 'value' => number_format($todayMetrics['received']), 'change' => percent_change($todayMetrics['received'], $yesterdayMetrics['received']), 'current' => $todayMetrics['received'], 'previous' => $yesterdayMetrics['received'], 'icon' => 'fa-cow', 'tone' => 'green'],
     ['label' => 'Certificates Issued', 'value' => number_format($todayCertificates), 'change' => percent_change($todayCertificates, $yesterdayCertificates), 'current' => $todayCertificates, 'previous' => $yesterdayCertificates, 'icon' => 'fa-circle-check', 'tone' => 'green'],
-    ['label' => 'Rejected (Ante)', 'value' => number_format($todayMetrics['rejected_ante']), 'change' => percent_change($todayMetrics['rejected_ante'], $yesterdayMetrics['rejected_ante']), 'current' => $todayMetrics['rejected_ante'], 'previous' => $yesterdayMetrics['rejected_ante'], 'icon' => 'fa-circle-xmark', 'tone' => 'red', 'inverse' => true],
+    ['label' => 'Ante-Mortem Inspections', 'value' => number_format($todayMetrics['ante_mortem_inspections']), 'change' => percent_change($todayMetrics['ante_mortem_inspections'], $yesterdayMetrics['ante_mortem_inspections']), 'current' => $todayMetrics['ante_mortem_inspections'], 'previous' => $yesterdayMetrics['ante_mortem_inspections'], 'icon' => 'fa-file-medical', 'tone' => 'green'],
     ['label' => 'Slaughtered', 'value' => number_format($todayMetrics['slaughtered']), 'change' => percent_change($todayMetrics['slaughtered'], $yesterdayMetrics['slaughtered']), 'current' => $todayMetrics['slaughtered'], 'previous' => $yesterdayMetrics['slaughtered'], 'icon' => 'fa-scissors', 'tone' => 'purple'],
     ['label' => 'Meat Released', 'value' => number_format($todayMetrics['released_weight']) . ' kg', 'change' => percent_change((int) round($todayMetrics['released_weight']), (int) round($yesterdayMetrics['released_weight'])), 'current' => $todayMetrics['released_weight'], 'previous' => $yesterdayMetrics['released_weight'], 'icon' => 'fa-bacon', 'tone' => 'orange'],
     ['label' => 'Condemned', 'value' => number_format($todayMetrics['condemned_weight']) . ' kg', 'change' => percent_change((int) round($todayMetrics['condemned_weight']), (int) round($yesterdayMetrics['condemned_weight'])), 'current' => $todayMetrics['condemned_weight'], 'previous' => $yesterdayMetrics['condemned_weight'], 'icon' => 'fa-trash-can', 'tone' => 'red', 'inverse' => true],
